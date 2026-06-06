@@ -17,7 +17,6 @@ main :: proc() {
 	ensure(arena_err == nil)
 	context.allocator = virtual.arena_allocator(&arena)
 
-	// TODO: handle zero-value key/iv and better error handling
 	args, _ := arguments.parse(os.args[1:])
 	if !arguments.state_is_valid(&args) {
 		usage.print()
@@ -65,7 +64,7 @@ store_data :: proc(args: ^arguments.Arguments, data: []u8) -> (err: os.Error) {
 	size := len(data)
 	if args.op == .Decrypt {
 		pad := pkcs7_read_padding(data)
-		ensure(pad > 0 && pad < size, "invalid padding value")
+		ensure(pad > 0 && pad < size, "Invalid padding value")
 		size -= pad
 	}
 
