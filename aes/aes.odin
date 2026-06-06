@@ -30,14 +30,12 @@ key_schedule_compute :: proc(key: u128) -> (key_schedule: [ROUND_KEYS]mat4) {
 		round_const := word{ROUND_CONSTS[i], 0, 0, 0}
 		xor_round_const := word_xor(word_sub_bytes(rot_word, S_BOX_ENC), round_const)
 
-		first_word := prev_key[0]
-		xor_first_word := word_xor(first_word, xor_round_const)
-		curr_key := &key_schedule[i]
-		curr_key[0] = xor_first_word
+		first_word := word_xor(prev_key[0], xor_round_const)
+		key_schedule[i][0] = first_word
 
 		// NOTE: remaining words [first_word, x, y, z]
 		for j in 1..<4 {
-			curr_key[j] = word_xor(curr_key[j - 1], prev_key[j])
+			key_schedule[i][j] = word_xor(key_schedule[i][j - 1], prev_key[j])
 		}
 	}
 
