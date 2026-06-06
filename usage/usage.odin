@@ -18,9 +18,9 @@ Arguments:
     -k [KEY]      : the 128-bit key (16 comma-separated unsigned 8-bit values)
 
 Example: aes encrypt -i input.bin -o output.bin -m CBC
-    -i 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    -v 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     -k 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0`
 
 print :: proc() {
-    fmt.println(USAGE)
+    fmt.eprintln(USAGE)
 }

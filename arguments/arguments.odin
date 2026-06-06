@@ -1,15 +1,13 @@
 package arguments
 
 import "core:container/intrusive/list"
-import "core:fmt"
 import "core:reflect"
 import "core:strconv"
 import "core:text/scanner"
 
 Arguments :: struct {
-	key:    u128,
-	iv:     u128,
-	data:   []u8,
+	key:    Maybe(u128),
+	iv:     Maybe(u128),
 	input:  string,
 	output: string,
 	op:     Operation,
@@ -75,9 +73,7 @@ parse_arg :: proc(
 		for elem in list.iterate_next(&it) {
 			if elem.value == name {
 				next, ok := list.iterate_next(&it)
-				if !ok {
-					fmt.panicf("Missing value for switch %v\n", name)
-				}
+				ensure(ok, "Missing value for switch")
 
 				list.remove(l, &elem.node)
 				list.remove(l, &next.node)
@@ -89,8 +85,7 @@ parse_arg :: proc(
 	}
 
 	if val == "" {
-		// NOTE: nothing found
-		return
+		return // NOTE: nothing found
 	}
 
 	switch type {
@@ -99,7 +94,7 @@ parse_arg :: proc(
 	case .Mode:
 		 (^Mode)(dst)^ = mode_scan(val)
 	case .Vector:
-		 (^u128)(dst)^ = vector_scan(val)
+		 (^Maybe(u128))(dst)^ = vector_scan(val)
 	case .Operation:
 		 (^Operation)(dst)^ = operation_scan(val)
 	}
@@ -107,10 +102,11 @@ parse_arg :: proc(
 
 state_is_valid :: proc(args: ^Arguments) -> bool {
 	return args.input != "" &&
-		args.op  != .None &&
+		args.output != "" &&
+		args.op != .None &&
 		args.mode != .None &&
-		args.key != 0 &&
-		(args.mode != .CBC || args.iv != 0);
+		args.key != nil &&
+		(args.mode != .CBC || args.iv != nil)
 }
 
 list_from_args :: proc(args: []string) -> (result: list.List) {
@@ -125,11 +121,7 @@ list_from_args :: proc(args: []string) -> (result: list.List) {
 
 mode_scan :: proc(name: string) -> Mode {
 	mode, ok :=  reflect.enum_from_name(Mode, name)
-	if !ok {
-		fmt.panicf("Invalid mode: %v\n", name)
-	}
-
-	return mode
+	return ok ? mode : .None
 }
 
 operation_scan :: proc(name: string) -> Operation {
@@ -139,7 +131,7 @@ operation_scan :: proc(name: string) -> Operation {
 	case "decrypt":
 		return .Decrypt
 	case:
-		fmt.panicf("Invalid operation: %v\n", name)
+		return .None
 	}
 }
 
@@ -156,29 +148,21 @@ vector_scan :: proc(input: string) -> u128 {
 	for tok: rune; tok != scanner.EOF; tok = scanner.scan(&sc) {
 		switch tok {
 		case scanner.Int:
-			if scanned == BYTES_TO_SCAN {
-				fmt.panicf("Trailing values in vector input\n")
-			}
+			ensure(scanned < BYTES_TO_SCAN, "Trailing values in vector input")
 
 			text := scanner.token_text(&sc)
 			val, _ := strconv.parse_uint(text, 10)
-			if val > MAX_VAL {
-				// TODO: error handling (out of range)
-				break
-			}
+			ensure(val <= MAX_VAL, "Vector byte out of range")
 
 			bytes[scanned] = u8(val)
 			scanned += 1
 		case ',', 0:
 			continue
 		case:
-			fmt.panicf("Invalid token on vector input: %v\n", tok)
+			ensure(false, "Invalid token on vector input")
 		}
 	}
 
-	if scanned < BYTES_TO_SCAN {
-		fmt.panicf("Not enough values in vector input")
-	}
-
+	ensure(scanned == BYTES_TO_SCAN, "Not enough values in vector input")
 	return transmute(u128)bytes
 }

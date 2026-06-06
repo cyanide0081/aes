@@ -10,54 +10,75 @@ import "arguments"
 import "usage"
 
 main :: proc() {
-	// NOTE: overriding the default heap allocator because we
-	// don't free any memory anyways
+	// NOTE: overriding the default heap allocator since we
+	// don't even free any memory
 	arena := virtual.Arena{}
 	arena_err := virtual.arena_init_growing(&arena)
 	ensure(arena_err == nil)
 	context.allocator = virtual.arena_allocator(&arena)
 
+	// TODO: handle zero-value key/iv and better error handling
 	args, _ := arguments.parse(os.args[1:])
-	fmt.println("arguments:", args)
 	if !arguments.state_is_valid(&args) {
 		usage.print()
 		return
 	}
 
-	bufs, load_err := load_data_and_prep_bufs(args.input)
+	bufs, load_err := load_data(&args)
 	if load_err != nil {
 		fmt.eprintln("Could not open file:", os.error_string(load_err))
 		return
 	}
 
 	aes.process(&args, &bufs)
-	fmt.println("processed:", bufs.output)
 
+	store_err := store_data(&args, bufs.output)
+	if store_err != nil {
+		fmt.eprintln("Could not write file:", os.error_string(load_err))
+		return
+	}
 
-	// TODO: write output
+	fmt.println("Results written to", args.output)
 }
 
-PADDING :: 16
-
-load_data_and_prep_bufs :: proc(filename: string) -> (bufs: aes.Buffers, err: os.Error) {
-	file := os.open(filename) or_return
-
-	alloc := context.allocator
+load_data :: proc(args: ^arguments.Arguments) -> (bufs: aes.Buffers, err: os.Error) {
+	file := os.open(args.input) or_return
 	file_size := int(os.file_size(file) or_return)
 
-	buf_size := mem.align_formula(file_size, PADDING)
-	if buf_size - file_size == 0 {
-		buf_size += PADDING // always add padding, even when already aligned
+	buf_size := file_size
+	if args.op == .Encrypt {
+		buf_size += pkcs7_compute_padding(buf_size)
 	}
 
 	buf := make([]u8, buf_size * 2)
 	os.read(file, buf) or_return
 
-	// NOTE: PKCS#7 padding
-	pad := buf_size - file_size
-	mem.set(raw_data(buf[file_size:]), u8(pad), pad)
+	padding := buf_size - file_size
+	mem.set(raw_data(buf[file_size:]), u8(padding), padding)
 
 	bufs.input = buf[:buf_size]
 	bufs.output = buf[buf_size:]
-	return bufs, nil
+	return
+}
+
+store_data :: proc(args: ^arguments.Arguments, data: []u8) -> (err: os.Error) {
+	size := len(data)
+	if args.op == .Decrypt {
+		pad := pkcs7_read_padding(data)
+		ensure(pad > 0 && pad < size, "invalid padding value")
+		size -= pad
+	}
+
+	os.write_entire_file(args.output, data[:size])
+	return
+}
+
+pkcs7_compute_padding :: proc(size: int) -> int {
+	PADDING :: aes.BLOCK_SIZE // NOTE: AES-128
+	aligned := mem.align_formula(size, PADDING)
+	return aligned == 0 ? PADDING : aligned - size
+}
+
+pkcs7_read_padding :: proc(buf: []u8) -> int {
+	return int(buf[len(buf) - 1])
 }
