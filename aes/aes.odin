@@ -11,9 +11,9 @@ Buffers :: struct {
 process :: proc(args: ^arguments.Arguments, bufs: ^Buffers) {
 	key_schedule := key_schedule_compute(args.key.?)
 	if args.op == .Encrypt {
-		encrypt(args, bufs, key_schedule)
+		encrypt(args, bufs, &key_schedule)
 	} else {
-		decrypt(args, bufs, key_schedule)
+		decrypt(args, bufs, &key_schedule)
 	}
 }
 
@@ -48,7 +48,7 @@ BLOCK_SIZE :: 16
 encrypt :: proc(
 	args: ^arguments.Arguments,
 	bufs: ^Buffers,
-	key_schedule: [ROUND_KEYS]mat4,
+	key_schedule: ^[ROUND_KEYS]mat4,
 ) {
 	block_count := len(bufs.input) / BLOCK_SIZE
 	chain := transmute(mat4)(args.iv.? or_else 0)
@@ -79,7 +79,7 @@ encrypt :: proc(
 decrypt :: proc(
 	args: ^arguments.Arguments,
 	bufs: ^Buffers,
-	key_schedule: [ROUND_KEYS]mat4,
+	key_schedule: ^[ROUND_KEYS]mat4,
 ) {
 	block_count := len(bufs.input) / BLOCK_SIZE
 	chain := transmute(mat4)(args.iv.? or_else 0)
