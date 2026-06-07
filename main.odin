@@ -14,7 +14,7 @@ main :: proc() {
 	// don't even free any memory
 	arena := virtual.Arena{}
 	arena_err := virtual.arena_init_growing(&arena)
-	ensure(arena_err == nil)
+	ensure(arena_err == nil, "Could not reserve virtual memory")
 	context.allocator = virtual.arena_allocator(&arena)
 
 	args, _ := arguments.parse(os.args[1:])
