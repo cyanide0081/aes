@@ -42,8 +42,9 @@ main :: proc() {
 
 load_data :: proc(args: ^arguments.Arguments) -> (bufs: aes.Buffers, err: os.Error) {
 	file := os.open(args.input) or_return
-	file_size := int(os.file_size(file) or_return)
+	defer os.close(file)
 
+	file_size := int(os.file_size(file) or_return)
 	buf_size := file_size
 	if args.op == .Encrypt {
 		buf_size += pkcs7_compute_padding(buf_size)
@@ -68,7 +69,7 @@ store_data :: proc(args: ^arguments.Arguments, data: []u8) -> (err: os.Error) {
 		size -= pad
 	}
 
-	os.write_entire_file(args.output, data[:size])
+	os.write_entire_file(args.output, data[:size]) or_return
 	return
 }
 
