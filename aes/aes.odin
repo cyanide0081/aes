@@ -264,11 +264,11 @@ GALOIS_FACTORS_DEC := mat4{
 	0x09, 0x0D, 0x0B, 0x0E,
 }
 
-mat_galois_mul :: proc(a, b: mat4) -> (result: mat4) {
+mat_galois_mul :: proc(mat, factors: mat4) -> (result: mat4) {
 	for c in 0..<WORD_LEN {
 		for r in 0..<WORD_LEN {
 			g: u8
-			a, b := a[c], b[r]
+			a, b := mat[c], factors[r]
 			for i in 0..<WORD_LEN {
 				g ~= galois_mul(a[i], b[i])
 			}
@@ -280,7 +280,7 @@ mat_galois_mul :: proc(a, b: mat4) -> (result: mat4) {
 	return
 }
 
-galois_mul :: proc(a, b: u8) -> u8 {
+galois_mul :: #force_inline proc(a, b: u8) -> u8 {
 	if a == 0 || b == 0 {
 		return 0
 	} else if a == 1 {
@@ -288,8 +288,7 @@ galois_mul :: proc(a, b: u8) -> u8 {
 	} else if b == 1 {
 		return a
 	} else {
-		a_l := GALOIS_L[a]
-		b_l := GALOIS_L[b]
+		a_l, b_l := GALOIS_L[a], GALOIS_L[b]
 		l_sum := galois_exp_add(a_l, b_l)
 		return GALOIS_E[l_sum]
 	}
