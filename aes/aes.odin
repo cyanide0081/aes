@@ -1,6 +1,7 @@
 package aes
 
 import "core:math/linalg"
+import "core:mem"
 import "../arguments"
 
 Buffers :: struct {
@@ -10,14 +11,19 @@ Buffers :: struct {
 
 process :: proc(args: ^arguments.Arguments, bufs: ^Buffers) {
 	key_schedule := key_schedule_compute(args.key.?)
-	if args.op == .Encrypt {
-		encrypt(args, bufs, &key_schedule)
-	} else {
-		decrypt(args, bufs, &key_schedule)
+
+	chain := vec_load(args.iv)
+	block_count := len(bufs.input) / BLOCK_SIZE
+	block_proc := args.op == .Encrypt ? block_encrypt : block_decrypt
+	for i in 0..<block_count {
+		block := mat_read(bufs.input, i)
+		block, chain = block_proc(args.mode, block, chain, &key_schedule)
+		mat_write(bufs.output, &block, i)
 	}
 }
 
 ROUND_KEYS :: 11
+@(rodata)
 ROUND_CONSTS := [ROUND_KEYS]u8{0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36}
 
 key_schedule_compute :: proc(key: u128) -> (key_schedule: [ROUND_KEYS]mat4) {
@@ -34,7 +40,7 @@ key_schedule_compute :: proc(key: u128) -> (key_schedule: [ROUND_KEYS]mat4) {
 		key_schedule[i][0] = first_word
 
 		// NOTE: remaining words [first_word, x, y, z]
-		for j in 1..<4 {
+		for j in 1..<WORD_LEN {
 			key_schedule[i][j] = key_schedule[i][j - 1] ~ prev_key[j]
 		}
 	}
@@ -45,107 +51,108 @@ key_schedule_compute :: proc(key: u128) -> (key_schedule: [ROUND_KEYS]mat4) {
 ROUNDS :: 10
 BLOCK_SIZE :: 16
 
-encrypt :: proc(
-	args: ^arguments.Arguments,
-	bufs: ^Buffers,
+block_encrypt :: proc(
+	mode: arguments.Mode,
+	block_raw, chain_cur: mat4,
 	key_schedule: ^[ROUND_KEYS]mat4,
-) {
-	block_count := len(bufs.input) / BLOCK_SIZE
-	chain := transmute(mat4)(args.iv.? or_else 0)
-	for i in 0..<block_count {
-		block := mat_read(bufs.input, i)
-		if args.mode == .CBC {
-			block = block ~ chain
-		}
+) -> (block: mat4, chain: mat4) {
+	block = block_raw
+	if mode == .CBC {
+		block = block ~ chain_cur
+	}
 
-		block = block ~ key_schedule[0]
+	block = block ~ key_schedule[0]
 
-		for j in 1..<ROUNDS {
-			sub_bytes := mat_sub_bytes(block, S_BOX_ENC)
-			shift_rows := mat_shift_rows(sub_bytes, SHIFT_ROWS_ENC)
-			mix_cols := mat_galois_mul(shift_rows, GALOIS_FACTORS_ENC)
-			block = mix_cols ~ key_schedule[j]
-		}
-
+	for j in 1..<ROUNDS {
 		sub_bytes := mat_sub_bytes(block, S_BOX_ENC)
 		shift_rows := mat_shift_rows(sub_bytes, SHIFT_ROWS_ENC)
-		block = shift_rows ~ key_schedule[ROUNDS]
-
-		chain = block
-		mat_write(bufs.output, block, i)
+		mix_cols := mat_galois_mul(shift_rows, GALOIS_FACTORS_ENC)
+		block = mix_cols ~ key_schedule[j]
 	}
+
+	sub_bytes := mat_sub_bytes(block, S_BOX_ENC)
+	shift_rows := mat_shift_rows(sub_bytes, SHIFT_ROWS_ENC)
+	block = shift_rows ~ key_schedule[ROUNDS]
+
+	chain = block
+	return block, chain
 }
 
-decrypt :: proc(
-	args: ^arguments.Arguments,
-	bufs: ^Buffers,
+block_decrypt :: proc(
+	mode: arguments.Mode,
+	block_raw, chain_cur: mat4,
 	key_schedule: ^[ROUND_KEYS]mat4,
-) {
-	block_count := len(bufs.input) / BLOCK_SIZE
-	chain := transmute(mat4)(args.iv.? or_else 0)
-	for i in 0..<block_count {
-		block_raw := mat_read(bufs.input, i)
-		block := block_raw ~ key_schedule[10]
-		shift_rows := mat_shift_rows(block, SHIFT_ROWS_DEC)
+) -> (block: mat4, chain: mat4) {
+	block = block_raw ~ key_schedule[10]
+	shift_rows := mat_shift_rows(block, SHIFT_ROWS_DEC)
+	block = mat_sub_bytes(shift_rows, S_BOX_DEC)
+
+	for j in 1..<ROUNDS {
+		with_round_key := block ~ key_schedule[ROUNDS - j]
+		mix_cols := mat_galois_mul(with_round_key, GALOIS_FACTORS_DEC)
+		shift_rows := mat_shift_rows(mix_cols, SHIFT_ROWS_DEC)
 		block = mat_sub_bytes(shift_rows, S_BOX_DEC)
-
-		for j in 1..<ROUNDS {
-			with_round_key := block ~ key_schedule[ROUNDS - j]
-			mix_cols := mat_galois_mul(with_round_key, GALOIS_FACTORS_DEC)
-			shift_rows := mat_shift_rows(mix_cols, SHIFT_ROWS_DEC)
-			block = mat_sub_bytes(shift_rows, S_BOX_DEC)
-		}
-
-		block = block ~ key_schedule[0]
-		if args.mode == .CBC {
-			block = block ~ chain
-			chain = block_raw
-		}
-
-		mat_write(bufs.output, block, i)
 	}
+
+	block = block ~ key_schedule[0]
+	if mode == .CBC {
+		block = block ~ chain_cur
+	}
+
+	chain = block_raw
+	return block, chain
+}
+
+vec_load :: proc(vec: Maybe(u128)) -> mat4 {
+	return transmute(mat4)(vec.? or_else 0)
 }
 
 word :: [4]u8
+WORD_LEN :: len(word)
+
 mat4 :: distinct matrix[4, 4]u8
 table :: distinct [256]u8
 
-word_rot :: proc(w: word, offset: int) -> (result: word) {
-	for i in 0..<4 {
-		result[i] = w[(i + offset) %% 4] // NOTE: %% -> floored remainder
+word_rot :: proc(w: word, offset: i8) -> (result: word) {
+	for i in 0..<WORD_LEN {
+		result[i] = w[(i8(i) + offset) %% WORD_LEN] // NOTE: %% -> floored remainder
 	}
 
 	return
 }
 
 word_sub_bytes :: proc(w: word, t: table) -> (sub_word: word) {
-	for byte, i in w {
-		sub_word[i] = t[byte]
+	for val, i in w {
+		sub_word[i] = t[val]
 	}
 
 	return
 }
 
-mat_read :: proc(data: []u8, block_index: int) -> mat4 {
-	ptr := cast(^u128)raw_data(data[block_index * BLOCK_SIZE:])
-	return transmute(mat4)(ptr^)
+block_offset :: #force_inline proc(data: []u8, block: int) -> rawptr {
+	return raw_data(data[block * BLOCK_SIZE:])
 }
 
-mat_write :: proc(data: []u8, block: mat4, block_index: int) {
-	ptr := cast(^u128)raw_data(data[block_index * BLOCK_SIZE:])
-	ptr^ = transmute(u128)block
+mat_read :: #force_inline proc(data: []u8, block_index: int) -> (result: mat4) {
+	mem.copy(&result, block_offset(data, block_index), BLOCK_SIZE)
+	return
 }
 
-SHIFT_ROWS_ENC := [4]int{0, 1, 2, 3}
-SHIFT_ROWS_DEC := [4]int{0, -1, -2, -3}
+mat_write :: #force_inline proc(data: []u8, block: ^mat4, block_index: int) {
+	mem.copy(block_offset(data, block_index), block, BLOCK_SIZE)
+}
 
-mat_shift_rows :: proc(mat: mat4, offsets: [4]int) -> mat4 {
+@(rodata)
+SHIFT_ROWS_ENC := [WORD_LEN]i8{0, 1, 2, 3}
+@(rodata)
+SHIFT_ROWS_DEC := [WORD_LEN]i8{0, -1, -2, -3}
+
+mat_shift_rows :: proc(mat: mat4, offsets: [WORD_LEN]i8) -> mat4 {
 	// transpose so we rotate rows and not columns (odin defaults to col-major)
 	mat := linalg.transpose(mat)
-	mat[0] = word_rot(mat[0], offsets[0])
-	mat[1] = word_rot(mat[1], offsets[1])
-	mat[2] = word_rot(mat[2], offsets[2])
-	mat[3] = word_rot(mat[3], offsets[3])
+	for i in 0..<WORD_LEN {
+		mat[i] = word_rot(mat[i], offsets[i])
+	}
 
 	// restore original shape
 	return linalg.transpose(mat)
@@ -193,7 +200,7 @@ S_BOX_DEC := table{
 }
 
 mat_sub_bytes :: proc(mat: mat4, t: table) -> (result: mat4) {
-	for i in 0..<4 {
+	for i in 0..<WORD_LEN {
 		result[i] = word_sub_bytes(mat[i], t)
 	}
 
@@ -258,15 +265,15 @@ GALOIS_FACTORS_DEC := mat4{
 }
 
 mat_galois_mul :: proc(a, b: mat4) -> (result: mat4) {
-	for i in 0..<4 {
-		for j in 0..<4 {
-			a, b := a[i], b[j]
-			g0 := galois_mul(a[0], b[0])
-			g1 := galois_mul(a[1], b[1])
-			g2 := galois_mul(a[2], b[2])
-			g3 := galois_mul(a[3], b[3])
+	for c in 0..<WORD_LEN {
+		for r in 0..<WORD_LEN {
+			g: u8
+			a, b := a[c], b[r]
+			for i in 0..<WORD_LEN {
+				g ~= galois_mul(a[i], b[i])
+			}
 
-			result[j, i] = g0 ~ g1 ~ g2 ~ g3
+			result[r, c] = g
 		}
 	}
 
@@ -288,7 +295,7 @@ galois_mul :: proc(a, b: u8) -> u8 {
 	}
 }
 
-galois_exp_add :: proc(a, b: u8) -> u8 {
+galois_exp_add :: #force_inline proc(a, b: u8) -> u8 {
 	sum := uint(a) + uint(b)
 	if (sum > 0xFF) {
 		sum -= 0xFF
