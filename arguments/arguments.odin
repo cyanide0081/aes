@@ -40,7 +40,6 @@ Type :: enum {
 
 parse :: proc(args: []string) -> (result: Arguments, err: string) {
 	l := list_from_args(args)
-	it := list.iterator_head(l, Element, "node")
 
     parse_arg(&result.input, &l, .String, "-i")
     parse_arg(&result.output, &l, .String, "-o")

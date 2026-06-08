@@ -84,8 +84,8 @@ block_decrypt :: proc(
 	key_schedule: ^[ROUND_KEYS]mat4,
 ) -> (block: mat4, chain: mat4) {
 	block = block_raw ~ key_schedule[10]
-	shift_rows := mat_shift_rows(block, SHIFT_ROWS_DEC)
-	block = mat_sub_bytes(shift_rows, S_BOX_DEC)
+	block = mat_shift_rows(block, SHIFT_ROWS_DEC)
+	block = mat_sub_bytes(block, S_BOX_DEC)
 
 	for j in 1..<ROUNDS {
 		with_round_key := block ~ key_schedule[ROUNDS - j]
