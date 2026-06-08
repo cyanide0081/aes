@@ -38,7 +38,7 @@ Type :: enum {
 	Operation,
 }
 
-parse :: proc(args: []string) -> (result: Arguments, err: string) {
+parse :: proc(args: []string) -> (result: Arguments) {
 	l := list_from_args(args)
 
     parse_arg(&result.input, &l, .String, "-i")

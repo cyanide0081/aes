@@ -17,7 +17,7 @@ main :: proc() {
 	ensure(arena_err == nil, "Could not reserve virtual memory")
 	context.allocator = virtual.arena_allocator(&arena)
 
-	args, _ := arguments.parse(os.args[1:])
+	args := arguments.parse(os.args[1:])
 	if !arguments.state_is_valid(&args) {
 		usage.print()
 		return
